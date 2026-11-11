@@ -1,0 +1,129 @@
+name: Flask Docker Build and Artifacts
+
+# Run on pushes to main, pull requests targeting main, or manually from Actions.
+on:
+  push:
+    branches:
+      - main
+
+  pull_request:
+    branches:
+      - main
+
+  workflow_dispatch:
+
+# Values available to every job in this workflow.
+env:
+  IMAGE_NAME: flask-learning-app
+  DOCKERFILE: ./Dockerfile
+  BUILD_CONTEXT: .
+
+jobs:
+  build:
+    name: Build Docker image
+    runs-on: ubuntu-latest
+
+    # A job output exposes a value produced by a step to dependent jobs. Here, image_tag will be available to the inspect job as: needs.build.outputs.image_tag
+    outputs:
+      image_tag: ${{ steps.image_metadata.outputs.image_tag }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Buildx is Docker's extended build tool. It supports advanced features ,such as efficient caching and multi-platform builds
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Create a unique tag using the commit SHA. A commit SHA identifies the exact version of the source code. "a83f91c72d4e..."
+      # GITHUB_OUTPUT is the supported way for a step to publish an output. The next steps can read it through steps.image_metadata.outputs.image_tag.
+      - name: Create image metadata
+        id: image_metadata
+        shell: bash
+        run: |
+          IMAGE_TAG="${GITHUB_SHA}"   
+          echo "image_tag=${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "Image tag created: ${IMAGE_TAG}"
+
+      
+      - name: Build Flask Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ env.BUILD_CONTEXT }}
+          file: ${{ env.DOCKERFILE }}
+          tags: ${{ env.IMAGE_NAME }}:${{ steps.image_metadata.outputs.image_tag }}
+          load: true
+          # cache-from/cache-to use the GitHub Actions cache backend. On later runs, BuildKit can reuse unchanged layers instead of rebuilding every layer from scratch. mode=max caches intermediate build layers too.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Save the locally built image to a TAR archive. The archive is a normal file, so we can upload it as a workflow artifact.
+      - name: Save Docker image as TAR
+        shell: bash
+        run: |
+          mkdir -p build-output
+          docker save \
+            "${IMAGE_NAME}:${{ steps.image_metadata.outputs.image_tag }}" \
+            --output build-output/flask-image.tar
+
+      # a small report that records which image was built.
+      # This report is useful for learning how files are transferred as artifacts.
+      - name: Create build report
+        shell: bash
+        run: |
+          {
+            echo "Docker image build report"
+            echo "Image: ${IMAGE_NAME}"
+            echo "Tag: ${{ steps.image_metadata.outputs.image_tag }}"
+            echo "Commit: ${GITHUB_SHA}"
+            echo "Run: ${GITHUB_RUN_ID}"
+          } > build-output/build-report.txt
+
+      # Upload files so that another job (or a person) can download them. The artifact contains the Docker image TAR and the build report.
+      - name: Upload Docker image and report
+        uses: actions/upload-artifact@v4
+        with:
+          name: flask-docker-build
+          path: build-output/
+          if-no-files-found: error
+          retention-days: 2
+
+
+  inspect:
+    name: Download and inspect image
+    runs-on: ubuntu-latest
+
+    # needs creates a dependency: this job starts only after build succeeds. It also makes the build job's outputs available through needs.build.outputs.
+    needs: build
+
+    steps:
+      # Download the artifact uploaded by the build job. Each job has its own runner, so this is how this job receives the files.
+      - name: Download Docker image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: flask-docker-build
+          path: downloaded-build/
+
+      # Load the TAR archive into this job's Docker engine.
+      - name: Load Docker image
+        shell: bash
+        run: |
+          docker load --input downloaded-build/flask-image.tar
+
+      # Read the image tag passed from the build job: needs.build.outputs.image_tag
+      - name: Inspect Docker image
+        env:
+          IMAGE_TAG: ${{ needs.build.outputs.image_tag }}
+        shell: bash
+        run: |
+          echo "Image tag received from the build job: ${IMAGE_TAG}"
+          docker image inspect \
+            "${IMAGE_NAME}:${IMAGE_TAG}" \
+            --format='Image ID: {{.Id}}'
+          echo
+          echo "Build report:"
+          cat downloaded-build/build-report.txt
+
+      # Show the image in the runner's local Docker image list.
+      - name: List Docker images
+        run: docker image ls "${IMAGE_NAME}"

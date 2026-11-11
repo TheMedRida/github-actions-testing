@@ -1,0 +1,70 @@
+name: Flask Security Checks
+
+# ------------------------------------------------------------
+# WHEN DOES THIS WORKFLOW RUN?
+# ------------------------------------------------------------
+on:
+  push:
+    branches:
+      - main
+
+  pull_request:
+    branches:
+      - main
+
+  # Also allow a person to start this workflow manually ,from the Actions tab in GitHub.
+  workflow_dispatch:
+    inputs:
+      check_optional_secret:
+        description: "Check whether the optional DEMO_API_TOKEN secret is configured"
+        required: false
+        type: boolean
+        default: false
+
+
+permissions:
+  contents: read
+
+jobs:
+  security-basics:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # The runner has the GitHub CLI (gh) installed. We use the token to list repository files through the API.
+      - name: Read repository contents using GITHUB_TOKEN
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/${GITHUB_REPOSITORY}/contents" --jq '.[].name'
+
+      # A pull request title is supplied by a user, so we need to  treat it as untrusted data.
+      # Pass the GitHub expression through an environment variable. Then read it as data from the environment in Python.
+      - name: Safely inspect pull request title
+        if: ${{ github.event_name == 'pull_request' }}
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          python - <<'PY'
+          import os
+
+          pr_title = os.environ.get("PR_TITLE", "")
+
+          # We only report its length here. We do not execute it
+          # as shell code or insert it into another command.
+          print(f"Received a pull request title ({len(pr_title)} characters).")
+          PY
+
+      
+      - name: Check whether optional demo secret is configured
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.check_optional_secret }}
+        env:
+          DEMO_API_TOKEN: ${{ secrets.DEMO_API_TOKEN }}
+        run: |
+          if [ -n "$DEMO_API_TOKEN" ]; then
+            echo "DEMO_API_TOKEN is configured."
+          else
+            echo "DEMO_API_TOKEN is not configured."
+          fi

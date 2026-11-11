@@ -1,0 +1,7 @@
+.git
+.github
+myworkflows
+__pycache__
+*.pyc
+.env
+.venv
