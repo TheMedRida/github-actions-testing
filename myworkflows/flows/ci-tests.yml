@@ -1,0 +1,64 @@
+name: Flask App Tests
+
+on:
+  push:
+    branches:
+      - main
+
+  pull_request:
+    branches:
+      - main
+
+# GitHub automatically creates a temporary GITHUB_TOKEN for jobs. We give it only the access this workflow needs.
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    # These defaults apply to 'run:' steps in this job. Our Python source and tests are inside the app directory.
+    defaults:
+      run:
+        working-directory: ./app
+
+    strategy:
+      # If one matrix job fails, do not cancel the other matrix jobs.
+      fail-fast: false
+      # Run no more than two matrix jobs at the same time.
+      max-parallel: 2
+      # A matrix creates a separate job for each Python version.
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    # Job-level environment variables are available to every step.
+    env:
+      MODE: ${{ vars.MODE || 'development' }}
+
+    steps:
+      # Step 1: Download the repository onto the runner.
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+
+      # Step 2: Install and configure the Python version for this
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          # Enable pip dependency caching. Later workflow runs can ,reuse cached packages when the dependency file is unchanged.
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+
+      # Step 3: Install the packages required by our Flask application.
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r ../requirements.txt
+
+
+      # Step 4: Discover and execute our unit tests.
+      - name: Run tests
+        run: |
+          python -m unittest discover -s . -p "main_test.py"
