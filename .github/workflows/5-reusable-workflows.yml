@@ -1,0 +1,20 @@
+name: Reusable Workflow Example
+
+on:
+  push:
+    branches: [main]
+
+  pull_request:
+    branches: [main]
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  python-checks:
+    uses: ./.github/workflows/5-1-reusable-python-checks.yml
+    with:
+      python-version: "3.12"
+      working-directory: "./app"
